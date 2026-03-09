@@ -2,12 +2,14 @@
 # Licensed under the MIT License.
 # This file is part of AnonXMusic
 
+
 import os
 import re
 import yt_dlp
 import random
 import asyncio
 import aiohttp
+from pathlib import Path
 
 from py_yt import Playlist, VideosSearch
 
@@ -37,9 +39,21 @@ class YouTube:
         if not self.cookies:
             if not self.warned:
                 self.warned = True
-                logger.warning("Cookies are missing; streaming might fail.")
+                logger.warning("Cookies are missing; downloads might fail.")
             return None
         return random.choice(self.cookies)
+
+    async def save_cookies(self, urls: list[str]) -> None:
+        logger.info("Saving cookies from urls...")
+        async with aiohttp.ClientSession() as session:
+            for url in urls:
+                name = url.split("/")[-1]
+                link = "https://batbin.me/raw/" + name
+                async with session.get(link) as resp:
+                    resp.raise_for_status()
+                    with open(f"{self.cookie_dir}/{name}.txt", "wb") as fw:
+                        fw.write(await resp.read())
+        logger.info(f"Cookies saved in {self.cookie_dir}.")
 
     def valid(self, url: str) -> bool:
         return bool(re.match(self.regex, url))
@@ -47,10 +61,8 @@ class YouTube:
     async def search(self, query: str, m_id: int, video: bool = False) -> Track | None:
         _search = VideosSearch(query, limit=1, with_live=False)
         results = await _search.next()
-
         if results and results["result"]:
             data = results["result"][0]
-
             return Track(
                 id=data.get("id"),
                 channel_name=data.get("channel", {}).get("name"),
@@ -63,14 +75,12 @@ class YouTube:
                 view_count=data.get("viewCount", {}).get("short"),
                 video=video,
             )
-
         return None
 
-    async def playlist(self, limit: int, user: str, url: str, video: bool):
+    async def playlist(self, limit: int, user: str, url: str, video: bool) -> list[Track | None]:
         tracks = []
         try:
             plist = await Playlist.get(url)
-
             for data in plist["videos"][:limit]:
                 track = Track(
                     id=data.get("id"),
@@ -85,31 +95,52 @@ class YouTube:
                     video=video,
                 )
                 tracks.append(track)
-
         except Exception:
             pass
-
         return tracks
 
     async def download(self, video_id: str, video: bool = False) -> str | None:
         url = self.base + video_id
-        cookie = self.get_cookies()
+        ext = "mp4" if video else "webm"
+        filename = f"downloads/{video_id}.{ext}"
 
-        ydl_opts = {
+        if Path(filename).exists():
+            return filename
+
+        cookie = self.get_cookies()
+        base_opts = {
+            "outtmpl": "downloads/%(id)s.%(ext)s",
             "quiet": True,
+            "noplaylist": True,
             "geo_bypass": True,
+            "no_warnings": True,
+            "overwrites": False,
             "nocheckcertificate": True,
             "cookiefile": cookie,
-            "format": "bestaudio/best",
         }
 
-        def _stream():
+        if video:
+            ydl_opts = {
+                **base_opts,
+                "format": "(bestvideo[height<=?720][width<=?1280][ext=mp4])+(bestaudio)",
+                "merge_output_format": "mp4",
+            }
+        else:
+            ydl_opts = {
+                **base_opts,
+                "format": "bestaudio[ext=webm][acodec=opus]",
+            }
+
+        def _download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 try:
-                    info = ydl.extract_info(url, download=False)
-                    return info["url"]
-                except Exception as ex:
-                    logger.warning("Stream failed: %s", ex)
+                    ydl.download([url])
+                except (yt_dlp.utils.DownloadError, yt_dlp.utils.ExtractorError):
+                    if cookie: self.cookies.remove(cookie)
                     return None
+                except Exception as ex:
+                    logger.warning("Download failed: %s", ex)
+                    return None
+            return filename
 
-        return await asyncio.to_thread(_stream)
+        return await asyncio.to_thread(_download)
