@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 # This file is part of AnonXMusic
 
-
 import os
 import re
 import yt_dlp
@@ -101,7 +100,7 @@ class YouTube:
 
     async def download(self, video_id: str, video: bool = False) -> str | None:
         url = self.base + video_id
-        ext = "mp4" if video else "webm"
+        ext = "mp4" if video else "m4a"   # ✅ changed from webm → m4a
         filename = f"downloads/{video_id}.{ext}"
 
         if Path(filename).exists():
@@ -117,6 +116,7 @@ class YouTube:
             "overwrites": False,
             "nocheckcertificate": True,
             "cookiefile": cookie,
+            "concurrent_fragment_downloads": 5,  # ✅ speed boost
         }
 
         if video:
@@ -128,7 +128,7 @@ class YouTube:
         else:
             ydl_opts = {
                 **base_opts,
-                "format": "bestaudio[ext=webm][acodec=opus]",
+                "format": "bestaudio[ext=m4a]/bestaudio",  # ✅ FAST format
             }
 
         def _download():
@@ -136,7 +136,8 @@ class YouTube:
                 try:
                     ydl.download([url])
                 except (yt_dlp.utils.DownloadError, yt_dlp.utils.ExtractorError):
-                    if cookie: self.cookies.remove(cookie)
+                    if cookie:
+                        self.cookies.remove(cookie)
                     return None
                 except Exception as ex:
                     logger.warning("Download failed: %s", ex)
