@@ -1,6 +1,5 @@
 # Copyright (c) 2025 AnonymousX1025
 # Licensed under the MIT License.
-# This file is part of AnonXMusic
 
 import os
 import re
@@ -100,14 +99,41 @@ class YouTube:
 
     async def download(self, video_id: str, video: bool = False) -> str | None:
         url = self.base + video_id
-        ext = "mp4" if video else "m4a"   # ✅ changed from webm → m4a
+
+        cookie = self.get_cookies()
+
+        # 🔥 STREAM MODE (instant play)
+        stream_opts = {
+            "quiet": True,
+            "geo_bypass": True,
+            "noplaylist": True,
+            "cookiefile": cookie,
+            "format": "bestaudio",
+        }
+
+        def _stream():
+            with yt_dlp.YoutubeDL(stream_opts) as ydl:
+                try:
+                    info = ydl.extract_info(url, download=False)
+                    return info["url"]   # ⚡ direct stream
+                except Exception as e:
+                    logger.warning(f"Stream failed, fallback to download: {e}")
+                    return None
+
+        stream_url = await asyncio.to_thread(_stream)
+
+        # ✅ agar stream mil gaya → instant play
+        if stream_url:
+            return stream_url
+
+        # 🔻 FALLBACK (agar stream fail ho jaye)
+        ext = "m4a"
         filename = f"downloads/{video_id}.{ext}"
 
         if Path(filename).exists():
             return filename
 
-        cookie = self.get_cookies()
-        base_opts = {
+        download_opts = {
             "outtmpl": "downloads/%(id)s.%(ext)s",
             "quiet": True,
             "noplaylist": True,
@@ -116,29 +142,14 @@ class YouTube:
             "overwrites": False,
             "nocheckcertificate": True,
             "cookiefile": cookie,
-            "concurrent_fragment_downloads": 5,  # ✅ speed boost
+            "format": "bestaudio[ext=m4a]/bestaudio",
+            "concurrent_fragment_downloads": 5,
         }
 
-        if video:
-            ydl_opts = {
-                **base_opts,
-                "format": "(bestvideo[height<=?720][width<=?1280][ext=mp4])+(bestaudio)",
-                "merge_output_format": "mp4",
-            }
-        else:
-            ydl_opts = {
-                **base_opts,
-                "format": "bestaudio[ext=m4a]/bestaudio",  # ✅ FAST format
-            }
-
         def _download():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            with yt_dlp.YoutubeDL(download_opts) as ydl:
                 try:
                     ydl.download([url])
-                except (yt_dlp.utils.DownloadError, yt_dlp.utils.ExtractorError):
-                    if cookie:
-                        self.cookies.remove(cookie)
-                    return None
                 except Exception as ex:
                     logger.warning("Download failed: %s", ex)
                     return None
